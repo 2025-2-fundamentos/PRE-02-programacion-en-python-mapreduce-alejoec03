@@ -8,12 +8,7 @@ import string
 import time
 
 
-def mapreduce(
-    mapper,
-    reducer,
-    input_dir,
-    output_dir,
-):
+def mapreduce(mapper, reducer, input_dir, output_dir):
     def read_lines_from_files(input_dir):
         sequence = []
         files = glob.glob(f"{input_dir}/*")
@@ -24,8 +19,7 @@ def mapreduce(
         return sequence
 
     def apply_shuffle_and_sort(pairs_sequence):
-        pairs_sequence = sorted(pairs_sequence)
-        return pairs_sequence
+        return sorted(pairs_sequence, key=lambda x: x[0])
 
     def write_results_to_file(result, output_dir):
         with open(f"{output_dir}/part-00000", "w", encoding="utf-8") as f:
@@ -51,48 +45,33 @@ def mapreduce(
     create_success_file(output_dir)
 
 
-def run_experiment(
-    n,
-    mapper,
-    reducer,
-    raw_dir,
-    input_dir,
-    output_dir,
-):
+def copy_raw_files_to_input_folder(raw_dir="files/raw", input_dir="files/input", n=5000):
+    """Copia los archivos desde raw a input n veces"""
+    if not os.path.exists(input_dir):
+        os.makedirs(input_dir)
 
-    def initialize_directory(directory):
-        if os.path.exists(directory):
-            for file in glob.glob(f"{directory}/*"):
-                os.remove(file)
-        else:
-            os.makedirs(directory)
+    # limpiar input
+    for file in glob.glob(f"{input_dir}/*"):
+        os.remove(file)
 
-    def copy_and_number_raw_files_to_input_folder(raw_dir, input_dir, n=5000):
-        for file in glob.glob(f"{raw_dir}/*"):
-            with open(file, "r", encoding="utf-8") as f:
-                text = f.read()
+    for file in glob.glob(f"{raw_dir}/*"):
+        with open(file, "r", encoding="utf-8") as f:
+            text = f.read()
 
-            for i in range(1, n + 1):
-                raw_filename_with_extension = os.path.basename(file)
-                raw_filename_without_extension = os.path.splitext(
-                    raw_filename_with_extension
-                )[0]
-                new_filename = f"{raw_filename_without_extension}_{i}.txt"
-                with open(f"{input_dir}/{new_filename}", "w", encoding="utf-8") as f2:
-                    f2.write(text)
+        for i in range(1, n + 1):
+            raw_filename_with_extension = os.path.basename(file)
+            raw_filename_without_extension = os.path.splitext(raw_filename_with_extension)[0]
+            new_filename = f"{raw_filename_without_extension}_{i}.txt"
+            with open(f"{input_dir}/{new_filename}", "w", encoding="utf-8") as f2:
+                f2.write(text)
 
-    initialize_directory(input_dir)
-    copy_and_number_raw_files_to_input_folder(raw_dir, input_dir, n)
+
+def run_experiment(n, mapper, reducer, raw_dir, input_dir, output_dir):
+    # prepara input
+    copy_raw_files_to_input_folder(raw_dir, input_dir, n)
 
     start_time = time.time()
-
-    mapreduce(
-        mapper,
-        reducer,
-        input_dir,
-        output_dir,
-    )
-
+    mapreduce(mapper, reducer, input_dir, output_dir)
     end_time = time.time()
 
     print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
@@ -106,7 +85,6 @@ def wordcount_mapper(sequence):
         line = line.replace("\n", "")
         words = line.split()
         pairs_sequence.extend((word, 1) for word in words)
-
     return pairs_sequence
 
 
@@ -121,9 +99,8 @@ def wordcount_reducer(pairs_sequence):
 
 
 if __name__ == "__main__":
-    
     run_experiment(
-        n=1000, 
+        n=5,
         mapper=wordcount_mapper,
         reducer=wordcount_reducer,
         raw_dir="files/raw",
