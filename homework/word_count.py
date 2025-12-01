@@ -123,7 +123,7 @@ def wordcount_reducer(pairs_sequence):
 if __name__ == "__main__":
     
     run_experiment(
-        n=5,  # or any number you want
+        n=1000, 
         mapper=wordcount_mapper,
         reducer=wordcount_reducer,
         raw_dir="files/raw",
