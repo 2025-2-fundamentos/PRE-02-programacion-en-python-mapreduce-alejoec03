@@ -2,108 +2,119 @@
 
 # pylint: disable=broad-exception-raised
 
+import fileinput
 import glob
 import os
-import string
+import shutil
 import time
+from itertools import groupby
+
+from toolz.itertoolz import concat, pluck
 
 
-def mapreduce(mapper, reducer, input_dir, output_dir):
-    def read_lines_from_files(input_dir):
-        sequence = []
-        files = glob.glob(f"{input_dir}/*")
-        for file in files:
-            with open(file, "r", encoding="utf-8") as f:
-                for line in f:
-                    sequence.append((file, line))
-        return sequence
+def copy_raw_files_to_input_folder(n):
+    """Generate n copies of the raw files in the input folder"""
+    # Carpeta donde están los archivos base
+    raw_folder = "files/raw"
 
-    def apply_shuffle_and_sort(pairs_sequence):
-        return sorted(pairs_sequence, key=lambda x: x[0])
+    # Carpeta donde se van a copiar
+    input_folder = "files/input"
 
-    def write_results_to_file(result, output_dir):
-        with open(f"{output_dir}/part-00000", "w", encoding="utf-8") as f:
-            for key, value in result:
-                f.write(f"{key}\t{value}\n")
+    # Crear carpeta si no existe
+    if os.path.exists(input_folder):
+        shutil.rmtree(input_folder)
+    os.makedirs(input_folder)
 
-    def create_success_file(output_dir):
-        with open(f"{output_dir}/_SUCCESS", "w", encoding="utf-8") as f:
-            f.write("")
+    # Obtener archivos base
+    raw_files = glob.glob(os.path.join(raw_folder, "*"))
 
-    def create_output_dir_or_fail(output_dir):
-        if os.path.exists(output_dir):
-            raise Exception(f"Output directory '{output_dir}' already exists.")
-        else:
-            os.makedirs(output_dir)
-
-    sequence = read_lines_from_files(input_dir)
-    pairs_sequence = mapper(sequence)
-    pairs_sequence = apply_shuffle_and_sort(pairs_sequence)
-    result = reducer(pairs_sequence)
-    create_output_dir_or_fail(output_dir)
-    write_results_to_file(result, output_dir)
-    create_success_file(output_dir)
+    # Copiar n veces
+    for i in range(n):
+        for file in raw_files:
+            shutil.copy(file, os.path.join(input_folder, f"{i}_{os.path.basename(file)}"))
 
 
-def copy_raw_files_to_input_folder(raw_dir="files/raw", input_dir="files/input", n=5000):
-    """Copia los archivos desde raw a input n veces"""
-    if not os.path.exists(input_dir):
-        os.makedirs(input_dir)
-
-    # limpiar input
-    for file in glob.glob(f"{input_dir}/*"):
-        os.remove(file)
-
-    for file in glob.glob(f"{raw_dir}/*"):
-        with open(file, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        for i in range(1, n + 1):
-            raw_filename_with_extension = os.path.basename(file)
-            raw_filename_without_extension = os.path.splitext(raw_filename_with_extension)[0]
-            new_filename = f"{raw_filename_without_extension}_{i}.txt"
-            with open(f"{input_dir}/{new_filename}", "w", encoding="utf-8") as f2:
-                f2.write(text)
+def load_input(input_directory):
+    """Load input: lee todos los archivos y devuelve cada línea"""
+    files = glob.glob(os.path.join(input_directory, "*"))
+    return fileinput.input(files, encoding="utf8")
 
 
-def run_experiment(n, mapper, reducer, raw_dir, input_dir, output_dir):
-    # prepara input
-    copy_raw_files_to_input_folder(raw_dir, input_dir, n)
-
-    start_time = time.time()
-    mapreduce(mapper, reducer, input_dir, output_dir)
-    end_time = time.time()
-
-    print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
+def preprocess_line(x):
+    """Convierte a minúsculas y separa palabras"""
+    return x.strip().lower().split()
 
 
-def wordcount_mapper(sequence):
-    pairs_sequence = []
-    for _, line in sequence:
-        line = line.lower()
-        line = line.translate(str.maketrans("", "", string.punctuation))
-        line = line.replace("\n", "")
-        words = line.split()
-        pairs_sequence.extend((word, 1) for word in words)
-    return pairs_sequence
+def map_line(x):
+    """Devuelve pares (palabra, 1)"""
+    return [(word, 1) for word in preprocess_line(x)]
 
 
-def wordcount_reducer(pairs_sequence):
-    result = []
-    for key, value in pairs_sequence:
-        if result and result[-1][0] == key:
-            result[-1] = (key, result[-1][1] + value)
-        else:
-            result.append((key, value))
-    return result
+def mapper(sequence):
+    """Mapper: aplica map_line a cada línea y concatena resultados"""
+    return concat(map(map_line, sequence))
+
+
+def shuffle_and_sort(sequence):
+    """Agrupa por palabra"""
+    sorted_seq = sorted(sequence, key=lambda x: x[0])
+    return groupby(sorted_seq, key=lambda x: x[0])
+
+
+def compute_sum_by_group(group):
+    """Suma los valores de cada grupo"""
+    key, values = group
+    total = sum(pluck(1, values))
+    return key, total
+
+
+def reducer(sequence):
+    """Reducer: aplica la suma por grupo"""
+    return [compute_sum_by_group(g) for g in sequence]
+
+
+def create_directory(directory):
+    """Crea la carpeta de salida"""
+    if os.path.exists(directory):
+        shutil.rmtree(directory)
+    os.makedirs(directory)
+
+
+def save_output(output_directory, sequence):
+    """Guardar salida en part-00000"""
+    output_file = os.path.join(output_directory, "part-00000")
+    with open(output_file, "w", encoding="utf-8") as f:
+        for key, value in sequence:
+            f.write(f"{key}\t{value}\n")
+
+
+def create_marker(output_directory):
+    """Crea archivo _SUCCESS"""
+    success_file = os.path.join(output_directory, "_SUCCESS")
+    open(success_file, "w").close()
+
+
+def run_job(input_directory, output_directory):
+    """Ejecución completa"""
+    sequence = load_input(input_directory)
+    sequence = mapper(sequence)
+    sequence = shuffle_and_sort(sequence)
+    sequence = reducer(sequence)
+    create_directory(output_directory)
+    save_output(output_directory, sequence)
+    create_marker(output_directory)
 
 
 if __name__ == "__main__":
-    run_experiment(
-        n=5,
-        mapper=wordcount_mapper,
-        reducer=wordcount_reducer,
-        raw_dir="files/raw",
-        input_dir="files/input",
-        output_dir="files/output",
+
+    copy_raw_files_to_input_folder(n=1000)
+
+    start_time = time.time()
+
+    run_job(
+        "files/input",
+        "files/output",
     )
+
+    end_time = time.time()
+    print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
